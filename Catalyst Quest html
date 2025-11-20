@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Catalyst Quest — Mini Game</title>
+<style>
+  :root{--bg:#0b1020;--panel:#0f1724;--accent:#7efc7e;--danger:#ff6b6b}
+  html,body{height:100%;margin:0;font-family:system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial;background:linear-gradient(180deg,var(--bg),#071028);color:#e6eef8;display:flex;align-items:center;justify-content:center}
+  .wrap{width:720px;max-width:95%;padding:18px;border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));box-shadow:0 8px 30px rgba(2,6,23,0.7)}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  h1{font-size:20px;margin:0;color:var(--accent)}
+  .info{font-size:14px;opacity:.9}
+  canvas{display:block;width:100%;height:420px;background:linear-gradient(180deg,#081025,#061827);border-radius:8px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.02)}
+  .controls{display:flex;gap:8px;margin-top:10px;align-items:center}
+  button{background:#0b1220;border:1px solid rgba(255,255,255,0.04);padding:8px 12px;border-radius:8px;color:#cfe9ff;cursor:pointer}
+  button:active{transform:translateY(1px)}
+  .stat{background:var(--panel);padding:8px 10px;border-radius:8px;margin-left:6px;font-weight:600}
+  .hint{font-size:13px;color:#9fb6d9;margin-left:8px}
+  .footer{margin-top:8px;font-size:13px;color:#a8c1e0;opacity:.9}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Catalyst Quest</h1>
+      <div class="info">Collect catalysts — avoid hazards!</div>
+    </header>
+
+    <canvas id="game" width="900" height="525"></canvas>
+
+    <div class="controls">
+      <button id="startBtn">Start</button>
+      <button id="pauseBtn">Pause</button>
+      <div class="stat">Score: <span id="score">0</span></div>
+      <div class="stat">Time: <span id="time">60</span>s</div>
+      <div class="hint">Move: Arrow keys or WASD</div>
+    </div>
+    <div class="footer">Tip: collect the glowing green catalysts for +10, red hazards -5.</div>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const timeEl = document.getElementById('time');
+  const startBtn = document.getElementById('startBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+
+  const W = canvas.width, H = canvas.height;
+  let keys = {}, running=false, paused=false, score=0, timeLeft=60, timerId=null, spawnTimer=0;
+
+  const player = { x: W/2, y: H/2, r:14, speed:220 };
+  const catalysts = []; // good (green)
+  const hazards = []; // bad (red)
+
+  function rand(min,max){return Math.random()*(max-min)+min}
+  function distance(a,b){const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy)}
+  function spawn(type){
+    const obj = { x: rand(40,W-40), y: rand(40,H-40), r: type==='cat'?10:14, vx:rand(-80,80), vy:rand(-80,80) };
+    if(type==='cat'){ obj.type='cat'; obj.value=10; obj.color='#7efc7e' }
+    else { obj.type='haz'; obj.value=-5; obj.color='#ff6b6b' }
+    return obj;
+  }
+
+  function resetGame(){
+    score=0; timeLeft=60; catalysts.length=0; hazards.length=0;
+    player.x=W/2; player.y=H/2; spawnTimer=0;
+    scoreEl.textContent=score; timeEl.textContent=timeLeft;
+  }
+
+  function startGame(){
+    resetGame();
+    running=true; paused=false;
+    startBtn.disabled=true; pauseBtn.disabled=false;
+    lastT = performance.now();
+    timerId = setInterval(()=>{ if(!paused){ timeLeft--; timeEl.textContent=timeLeft; if(timeLeft<=0) endGame(); } }, 1000);
+    requestAnimationFrame(loop);
+  }
+  function pauseGame(){
+    paused = !paused;
+    pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+  }
+  function endGame(){
+    running=false;
+    startBtn.disabled=false; pauseBtn.disabled=true; pauseBtn.textContent='Pause';
+    clearInterval(timerId);
+    setTimeout(()=>alert(`Time! Final score: ${score}`),50);
+  }
+
+  let lastT = 0;
+  function loop(t){
+    if(!running) return;
+    const dt = Math.min(0.06, (t - lastT)/1000 || 0.016);
+    lastT = t;
+    if(!paused) update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function update(dt){
+    // input
+    let dx=0, dy=0;
+    if(keys.ArrowUp||keys.w) dy-=1;
+    if(keys.ArrowDown||keys.s) dy+=1;
+    if(keys.ArrowLeft||keys.a) dx-=1;
+    if(keys.ArrowRight||keys.d) dx+=1;
+    if(dx||dy){
+      const len = Math.hypot(dx,dy);
+      player.x += (dx/len)*player.speed*dt;
+      player.y += (dy/len)*player.speed*dt;
+    }
+    // bounds
+    player.x = Math.max(player.r, Math.min(W-player.r, player.x));
+    player.y = Math.max(player.r, Math.min(H-player.r, player.y));
+
+    // spawn logic
+    spawnTimer += dt;
+    if(spawnTimer > 0.8){
+      spawnTimer = 0;
+      // more catalysts early, more hazards later
+      if(Math.random() < Math.min(0.7, 0.5 + (60-timeLeft)/120)) catalysts.push(spawn('cat'));
+      else hazards.push(spawn('haz'));
+    }
+
+    // move objects
+    [...catalysts, ...hazards].forEach(o=>{
+      o.x += o.vx*dt; o.y += o.vy*dt;
+      // bounce
+      if(o.x < o.r || o.x > W-o.r) o.vx *= -1;
+      if(o.y < o.r || o.y > H-o.r) o.vy *= -1;
+    });
+
+    // collisions
+    for(let i=catalysts.length-1;i>=0;i--){
+      if(distance(player, catalysts[i]) < player.r + catalysts[i].r){
+        score += catalysts[i].value;
+        catalysts.splice(i,1);
+      }
+    }
+    for(let i=hazards.length-1;i>=0;i--){
+      if(distance(player, hazards[i]) < player.r + hazards[i].r){
+        score += hazards[i].value;
+        hazards.splice(i,1);
+        // small penalty: push player slightly
+        player.x = Math.max(player.r, Math.min(W-player.r, player.x + (Math.random()*40-20)));
+        player.y = Math.max(player.r, Math.min(H-player.r, player.y + (Math.random()*40-20)));
+      }
+    }
+
+    // update UI
+    scoreEl.textContent = Math.max(0, score);
+
+    // simple difficulty ramp: occasionally add extra hazards
+    if(Math.random() < Math.max(0, 0.002*(60-timeLeft))) hazards.push(spawn('haz'));
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+
+    // background grid glow
+    const g = ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,'rgba(18,28,44,0.12)');
+    g.addColorStop(1,'rgba(6,16,26,0.15)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,W,H);
+
+    // draw catalysts
+    catalysts.forEach(o=>{
+      const glow = ctx.createRadialGradient(o.x,o.y,o.r*0.2,o.x,o.y,o.r*2);
+      glow.addColorStop(0,'rgba(126,252,126,0.95)');
+      glow.addColorStop(1,'rgba(126,252,126,0.02)');
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(o.x,o.y,o.r,0,Math.PI*2); ctx.fill();
+      // core
+      ctx.fillStyle = '#004e00'; ctx.beginPath(); ctx.arc(o.x,o.y, o.r*0.45,0,Math.PI*2); ctx.fill();
+    });
+
+    // draw hazards
+    hazards.forEach(o=>{
+      const glow = ctx.createRadialGradient(o.x,o.y,o.r*0.2,o.x,o.y,o.r*2);
+      glow.addColorStop(0,'rgba(255,107,107,0.95)');
+      glow.addColorStop(1,'rgba(255,107,107,0.02)');
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(o.x,o.y,o.r,0,Math.PI*2); ctx.fill();
+      //
